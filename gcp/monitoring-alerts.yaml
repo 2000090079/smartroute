@@ -1,0 +1,139 @@
+# Cloud Monitoring alert policies for SmartRoute's Cloud Run service.
+#
+# This file holds three alert policy definitions as separate YAML
+# documents (--- separated). The `gcloud alpha monitoring policies
+# create --policy-from-file=` command accepts exactly one policy per
+# invocation, so apply them with the loop documented in
+# gcp/README-GCP.md (section 4) rather than pointing gcloud at this
+# whole file directly.
+#
+# Before applying, create an email notification channel and export its
+# ID (see gcp/README-GCP.md section 4 for the exact commands):
+#
+#   export NOTIFICATION_CHANNEL_ID=projects/YOUR_PROJECT_ID/notificationChannels/1234567890
+#
+# Then each document below is rendered with `envsubst` to fill in
+# ${PROJECT_ID}, ${SERVICE_NAME}, and ${NOTIFICATION_CHANNEL_ID}.
+
+displayName: "SmartRoute - High error rate (>5%)"
+combiner: OR
+severity: ERROR
+conditions:
+  - displayName: "5xx response ratio > 5% over 5m"
+    conditionMonitoringQueryLanguage:
+      query: |
+        fetch cloud_run_revision
+        | metric 'run.googleapis.com/request_count'
+        | filter resource.service_name == '${SERVICE_NAME}'
+        | align rate(5m)
+        | every 5m
+        | group_by [metric.response_code_class],
+            [request_count: aggregate(value.request_count)]
+        | group_by [],
+            [error_count: sum(if(metric.response_code_class == '5xx', request_count, 0)),
+             total_count: sum(request_count)]
+        | value [error_ratio: cast_units(error_count / total_count, "1")]
+        | condition error_ratio.value > 0.05
+      duration: 300s
+      trigger:
+        count: 1
+notificationChannels:
+  - "${NOTIFICATION_CHANNEL_ID}"
+alertStrategy:
+  autoClose: 604800s
+  notificationRateLimit:
+    period: 300s
+documentation:
+  content: |
+    SmartRoute backend (`${SERVICE_NAME}`) is returning 5xx responses for
+    more than 5% of requests over a 5 minute window.
+
+    First checks:
+    - Cloud Run logs: `gcloud run services logs read ${SERVICE_NAME} --region=us-central1 --limit=50`
+    - Is MongoDB/Firestore reachable? `AuditService.java` falls back to
+      in-memory storage on connection failure, which is not itself a 5xx
+      cause, but OpenAI API failures during `/api/chat`
+      (`IntentService.java`) can surface as 500s if the fallback path
+      also errors.
+    - Check the OpenAI API status page if `IntentService.java` calls are
+      failing.
+  mimeType: text/markdown
+---
+displayName: "SmartRoute - High latency (>2000ms)"
+combiner: OR
+severity: WARNING
+conditions:
+  - displayName: "p99 request latency > 2000ms over 5m"
+    conditionThreshold:
+      filter: >-
+        resource.type = "cloud_run_revision" AND
+        resource.labels.service_name = "${SERVICE_NAME}" AND
+        metric.type = "run.googleapis.com/request_latencies"
+      comparison: COMPARISON_GT
+      thresholdValue: 2000
+      duration: 300s
+      aggregations:
+        - alignmentPeriod: 300s
+          perSeriesAligner: ALIGN_DELTA
+          crossSeriesReducer: REDUCE_PERCENTILE_99
+          groupByFields:
+            - resource.labels.service_name
+      trigger:
+        count: 1
+notificationChannels:
+  - "${NOTIFICATION_CHANNEL_ID}"
+alertStrategy:
+  autoClose: 604800s
+  notificationRateLimit:
+    period: 300s
+documentation:
+  content: |
+    SmartRoute backend (`${SERVICE_NAME}`) p99 request latency exceeded
+    2000ms over a 5 minute window.
+
+    Likely causes: slow OpenAI API responses in `IntentService.java`, a
+    cold start (min-instances is 0 — see gcp/cloud-run.yaml), or a slow
+    MongoDB/Firestore query in `AuditService.java`. Check `GET /metrics` for the
+    `smartroute_confidence_score` histogram and Cloud Run request logs for
+    the slow revision.
+  mimeType: text/markdown
+---
+displayName: "SmartRoute - Instance count at max (10)"
+combiner: OR
+severity: WARNING
+conditions:
+  - displayName: "Active instance count >= 10 for 5m"
+    conditionThreshold:
+      filter: >-
+        resource.type = "cloud_run_revision" AND
+        resource.labels.service_name = "${SERVICE_NAME}" AND
+        metric.type = "run.googleapis.com/container/instance_count" AND
+        metric.labels.state = "active"
+      comparison: COMPARISON_GE
+      thresholdValue: 10
+      duration: 300s
+      aggregations:
+        - alignmentPeriod: 300s
+          perSeriesAligner: ALIGN_MAX
+          crossSeriesReducer: REDUCE_MAX
+          groupByFields:
+            - resource.labels.service_name
+      trigger:
+        count: 1
+notificationChannels:
+  - "${NOTIFICATION_CHANNEL_ID}"
+alertStrategy:
+  autoClose: 604800s
+  notificationRateLimit:
+    period: 300s
+documentation:
+  content: |
+    SmartRoute backend (`${SERVICE_NAME}`) has hit its configured
+    max-instances ceiling (10, set in gcp/cloud-run.yaml and
+    cloudbuild.yaml). Requests may start queuing or failing once traffic
+    exceeds what 10 instances at containerConcurrency=80 can serve.
+
+    To resolve: raise `--max-instances` on the Cloud Run service, or
+    investigate whether traffic is legitimate growth vs. a retry storm /
+    abuse pattern.
+  mimeType: text/markdown

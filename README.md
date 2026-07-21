@@ -1,5 +1,7 @@
 # SmartRoute
 
+[![Deployable on Google Cloud Run](https://img.shields.io/badge/Deployable%20on-Google%20Cloud%20Run-4285F4?logo=googlecloud&logoColor=white)](gcp/README-GCP.md)
+
 An AI-powered contact center routing system. A customer types a message into
 a chat widget; GPT-4o classifies its intent, sentiment, and confidence; a
 rule-based routing engine decides where it goes (auto-resolved, billing
@@ -204,3 +206,25 @@ before querying the audit store.
   inherent to keyword matching as a *fallback*, not the primary path —
   GPT-4o's contextual understanding avoids this when it's available and
   confident.
+
+## GCP Deployment
+
+SmartRoute's backend deploys to [Cloud Run](https://cloud.google.com/run),
+built via Cloud Build and pushed to Artifact Registry, with secrets held in
+Secret Manager and alerting through Cloud Monitoring. An optional migration
+path off MongoDB onto Firestore is also documented.
+
+Full step-by-step instructions, prerequisites, and troubleshooting live in
+[`gcp/README-GCP.md`](gcp/README-GCP.md). Quick start:
+
+```bash
+export PROJECT_ID=YOUR_PROJECT_ID
+gcloud config set project "${PROJECT_ID}"
+./gcp/setup-gcp.sh              # enable APIs, create infra, first deploy
+./gcp/secret-manager-setup.sh   # create OPENAI_API_KEY, MONGODB_URI, JWT_SECRET
+```
+
+See [`gcp/README-GCP.md`](gcp/README-GCP.md) for the full guide, including
+Cloud Build auto-deploy setup, Cloud Monitoring alert policies
+(`gcp/monitoring-alerts.yaml`), and the MongoDB → Firestore migration
+(`gcp/firestore-schema.md`).
