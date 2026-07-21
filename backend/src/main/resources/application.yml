@@ -1,0 +1,25 @@
+server:
+  port: ${PORT:8080}
+  error:
+    include-message: always
+
+spring:
+  application:
+    name: smartroute-backend
+  jackson:
+    default-property-inclusion: non_absent
+
+logging:
+  level:
+    root: INFO
+    com.smartroute: INFO
+
+# Bound into com.smartroute.config.AppConfig -- these env var names match
+# what gcp/secret-manager-setup.sh and cloudbuild.yaml already provision.
+smartroute:
+  openai-api-key: ${OPENAI_API_KEY:}
+  openai-model: ${OPENAI_MODEL:gpt-4o}
+  mongo-uri: ${MONGO_URI:mongodb://localhost:27017}
+  mongo-db-name: ${MONGO_DB_NAME:smartroute}
+  confidence-threshold: ${CONFIDENCE_THRESHOLD:0.7}
+  cors-origins: ${CORS_ORIGINS:http://localhost:5173,http://localhost:3000}
